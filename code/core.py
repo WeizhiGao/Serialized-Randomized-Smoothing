@@ -8,7 +8,6 @@ import os
 import numpy as np
 from math import ceil, floor, sqrt
 from statsmodels.stats.proportion import proportion_confint
-from sampler import langevin
 
 from implicit_model.model import mdeq
 from datasets import get_normalize_layer
@@ -58,18 +57,9 @@ class Smooth(object):
         # draw more samples of f(x + epsilon)
         counts_estimation = self._sample_noise(x, n, batch_size)
         # use these samples to estimate a lower bound on pA
-        # nA = floor(counts_estimation[cAHat].item() * self.conserve_rate)
-        # n_total = ceil(n * self.conserve_rate)
-
         nA = counts_estimation[cAHat].item()
-        drops = ceil(nA * (1-self.conserve_rate))
         nA = nA * (self.conserve_rate)
         n_total = n * (self.conserve_rate)
-
-        # nA = counts_estimation[cAHat].item()
-        # nA_effective = int(max((nA - (1-self.conserve_rate) * n) / self.conserve_rate, 0))
-        # n_total = n - (nA - nA_effective)
-        # # print(nA, nA-nA_effective)
 
         pABar = self._lower_confidence_bound(nA, n_total, self.alpha)
         if pABar < 0.5:
@@ -163,7 +153,7 @@ class Smooth(object):
         n0 = num
         with torch.no_grad():
             counts = np.zeros(self.num_classes, dtype=int)
-            if self.args.start_point:
+            if self.args.srs:
                 start_point = 1
             else:
                 start_point = None
@@ -175,26 +165,20 @@ class Smooth(object):
                 this_batch_size = min(batch_size, num)
                 num -= this_batch_size
                 batch = x.repeat((this_batch_size, 1, 1, 1))
-                if self.args.langevin:
-                    if n_batch == 0:
-                        noise = torch.randn_like(batch, device='cuda') * self.sigma
-                    else:
-                        for _ in range(self.args.langevin_interval):
-                            noise, accept_rate = langevin(noise, sigma=self.args.sigma, eps=self.args.langevin_eps)
+                noise = torch.randn_like(batch, device='cuda') * self.sigma
+
+                if self.args.warmup_thresh and n_batch % self.args.warmup_interval == 0:
+                    warmup_f_thresh = self.args.warmup_thresh
+                    warmup_solver = self.args.warm_up_solver
                 else:
-                    noise = torch.randn_like(batch, device='cuda') * self.sigma
-                if self.args.restart_thresh and n_batch % self.args.restart_interval == 0:
-                    restart_f_thresh = self.args.restart_thresh
-                    restart_solver = self.args.restart_solver
-                else:
-                    restart_f_thresh = None
-                    restart_solver = None
+                    warmup_f_thresh = None
+                    warmup_solver = None
 
                 if hasattr(self.base_classifier, 'module'):
                     records, _, _, out = self.base_classifier(batch + noise, train_step=-1, compute_jac_loss=False,
                                                               start=start_point, detail=self.args.detail,
-                                                              f_thresh=restart_f_thresh, solver=restart_solver)
-                    if self.args.start_point:
+                                                              f_thresh=warmup_f_thresh, solver=warmup_solver)
+                    if self.args.srs:
                         start_point = out['final_result']
 
                     if not self.args.detail:
@@ -206,22 +190,11 @@ class Smooth(object):
                 else:
                     predictions = self.base_classifier(batch + noise).argmax(1)
 
-                """temp"""
-                records_base, _, _, _ = self.base_classifier(batch + noise, train_step=-1, compute_jac_loss=False,
-                                                             start=None, detail=self.args.detail,
-                                                             f_thresh=self.args.restart_thresh)
-                predictions_base = records_base.argmax(1)
-                temp_counts = self._count_arr(predictions.cpu().numpy(), self.num_classes)
-                temp_A = temp_counts.argmax().item()
-                n1 += int(torch.sum((predictions_base == predictions) * (predictions_base == temp_A)).item())
-                n2 += temp_counts[temp_A].item()
-                """temp stop"""
-
                 """drop unreliable samples"""
                 if self.args.conf_drop and drop_idx < self.args.conf_drop and n_batch > 0:
                     records_base, _, _, _ = self.base_classifier(batch + noise, train_step=-1, compute_jac_loss=False,
                                                                  start=None, detail=self.args.detail,
-                                                                 f_thresh=self.args.restart_thresh)
+                                                                 f_thresh=self.args.warmup_thresh)
                     predictions_base = records_base.argmax(1)
                     drop_idx += batch_size
                     drop_test_samples[0, drop_idx-batch_size:drop_idx] = predictions.view(1, -1)
@@ -230,10 +203,6 @@ class Smooth(object):
                 counts += self._count_arr(predictions.cpu().numpy(), self.num_classes)
 
         if self.args.conf_drop and drop_idx >= self.args.conf_drop:
-            # correct = int(torch.sum(drop_test_samples[0, :] == drop_test_samples[1, :]).item())
-            # self.conserve_rate = self._lower_confidence_bound(correct, drop_idx, alpha=self.alpha)
-            # print(self.conserve_rate)
-            # correct_all = int(torch.sum(drop_test_samples[0, :] == drop_test_samples[1, :]).item())
             mini_counts = self._count_arr(drop_test_samples[0, :].cpu().numpy(), self.num_classes)
             hat_A = mini_counts.argmax().item()
             nA = mini_counts[hat_A].item()
@@ -241,12 +210,6 @@ class Smooth(object):
             self.conserve_rate = self._lower_confidence_bound(correct_A, nA, alpha=self.alpha)
             # print(self.conserve_rate)
 
-        if n0 > 100:
-            gap = max(n1/n2-self.conserve_rate, 0)
-            self.stat.append(gap)
-
-        # if self.args.langevin and n_batch > 0:
-        #     print(f'langevin_eps: {self.args.langevin_eps}\t accept_rate: {accept_rate}')
         return counts
 
     def _count_arr(self, arr: np.ndarray, length: int) -> np.ndarray:
@@ -319,6 +282,7 @@ class Smooth(object):
 
 
 class smooth_fit_function(nn.Module):
+    # fit a differentiable function to approximate the smooth classifier
     def __init__(self, smooth, t: int = 1, num: int = 100):
         super(smooth_fit_function, self).__init__()
         self.base_classifier = smooth.base_classifier
@@ -338,3 +302,4 @@ class deq_(nn.Module):
     def forward(self, x):
         out, _, _, _ = self.base_classifier(x, attack=True, train_step=-1)
         return out
+    

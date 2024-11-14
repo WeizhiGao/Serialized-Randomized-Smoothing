@@ -25,13 +25,13 @@ parser.add_argument("--N0", type=int, default=100)
 parser.add_argument("--N", type=int, default=100000, help="number of samples to use")
 parser.add_argument("--alpha", type=float, default=0.001, help="failure probability")
 
-# implicit model
+# implicit model hyperparameters
 parser.add_argument("--f_solver", type=str, default='broyden', help="the solver for deq")
 parser.add_argument("--f_thresh", type=int, default=8, help='the threshold of the iterations for the solver')
-parser.add_argument("--start_point", dest='start_point', action='store_true', default=False, help='if use SRS')
-parser.add_argument("--restart_solver", type=str, default=None, help='the solver of warm-up')
-parser.add_argument("--restart_thresh", type=int, default=None, help='the number of iterations of warm-up')
-parser.add_argument("--restart_interval", type=int, default=1000, help='the number of intervals of warm-up')
+parser.add_argument("--srs", dest='srs', action='store_true', default=False, help='if use SRS')
+parser.add_argument("--warmup_solver", type=str, default=None, help='the solver of warm-up')
+parser.add_argument("--warmup_thresh", type=int, default=None, help='the number of iterations of warm-up')
+parser.add_argument("--warmup_interval", type=int, default=1000, help='the number of intervals of warm-up')
 parser.add_argument("--conf_drop", type=int, default=None, help='the number of samples in two-stage certification')
 parser.add_argument("--detail", dest='detail', action='store_true', default=False, help='if print the details')
 
