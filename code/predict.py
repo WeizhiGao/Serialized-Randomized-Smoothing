@@ -35,20 +35,17 @@ parser.add_argument("--step_num", type=int, default=20, help="the number of step
 parser.add_argument("--t", type=int, default=1, help="the temperature hyperparameter of the fitting function")
 parser.add_argument("--sn", type=int, default=100, help="number of samplings for fitting function")
 
-# implicit model
-parser.add_argument("--f_solver", type=str, default='broyden')
-parser.add_argument("--f_thresh", type=int, default=8)
-parser.add_argument("--test_point", type=int, default=None)
-parser.add_argument("--start_point", dest='start_point', action='store_true', default=False)
-parser.add_argument("--restart_thresh", type=int, default=None)
-parser.add_argument("--restart_interval", type=int, default=1000) # default means doesnt restart after 0
-parser.add_argument("--restart_solver", type=str, default=None)
-parser.add_argument("--detail", dest='detail', action='store_true', default=False)
+# implicit model hyperparameters
+parser.add_argument("--f_solver", type=str, default='broyden', help="the solver for deq")
+parser.add_argument("--f_thresh", type=int, default=8, help='the threshold of the iterations for the solver')
+parser.add_argument("--srs", dest='srs', action='store_true', default=False, help='if use SRS')
+parser.add_argument("--warmup_solver", type=str, default=None, help='the solver of warm-up')
+parser.add_argument("--warmup_thresh", type=int, default=None, help='the number of iterations of warm-up')
+parser.add_argument("--warmup_interval", type=int, default=1000, help='the number of intervals of warm-up')
+parser.add_argument("--conf_drop", type=int, default=None, help='the number of samples in two-stage certification')
+parser.add_argument("--detail", dest='detail', action='store_true', default=False, help='if print the details')
 
-# langevin sampler
-parser.add_argument("--langevin", dest='langevin', action='store_true', default=False)
-parser.add_argument("--langevin_eps", type=float, default=0.0001)
-parser.add_argument("--langevin_interval", type=int, default=1)
+
 args = parser.parse_args()
 
 cudnn.benchmark = True
